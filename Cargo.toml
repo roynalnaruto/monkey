@@ -1,0 +1,14 @@
+[package]
+name = "monkey"
+version = "0.1.0"
+authors = ["Rohit Narurkar <rohit.narurkar@protonmail.com>"]
+edition = "2018"
+
+[dependencies]
+async-std = "1.5.0"
+chrono = { version = "0.4", features = ["serde"] }
+env_logger = "0.7.1"
+futures = "0.3.5"
+lazy_static = "1.4.0"
+libp2p = "0.18.1"
+serde = { version = "1.0.110", features = ["derive"] }
