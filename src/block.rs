@@ -26,6 +26,11 @@ impl BlockBody {
         body.validate_length().and_then(Self::validate_subset)
     }
 
+    #[allow(dead_code)]
+    pub fn validate(self) -> Result<Self, BlockError> {
+        self.validate_length().and_then(Self::validate_subset)
+    }
+
     pub fn validate_subset(self) -> Result<BlockBody, BlockError> {
         match self.wordset.is_subset(&DICTIONARY) {
             true => Ok(self),
@@ -45,17 +50,14 @@ impl BlockBody {
 pub struct Block {
     body: BlockBody,
     proposer: [u8; 32],
-    hash: u64,
-    parent_hash: u64,
+    pub hash: u64,
+    pub parent_hash: u64,
     timestamp: DateTime<Utc>,
 }
 
 impl Hash for Block {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.body.hash(state);
-        self.proposer.hash(state);
-        self.parent_hash.hash(state);
-        self.timestamp.hash(state);
     }
 }
 
@@ -82,6 +84,14 @@ impl Block {
         Ok(block)
     }
 
+    pub fn validate(self) -> Result<Self, BlockError> {
+        self.body
+            .clone()
+            .validate_length()
+            .and_then(BlockBody::validate_subset)
+            .map(|_| self)
+    }
+
     pub fn sign(self, keypair: &Keypair) -> SignedBlock {
         let message = serialize(&self).unwrap();
 
@@ -96,17 +106,21 @@ impl Block {
 
 type Signature = Vec<u8>;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SignedBlock {
-    message: Block,
+    pub message: Block,
     signature: Signature,
 }
 
 impl SignedBlock {
-    pub fn verify_signature(&self, public_key: &PublicKey) -> bool {
-        let message = serialize(&self.message).unwrap();
-
-        public_key.verify(&message, &self.signature)
+    pub fn verify_signature(&self) -> bool {
+        match PublicKey::decode(&self.message.proposer) {
+            Ok(public_key) => {
+                let message = serialize(&self.message).unwrap();
+                public_key.verify(&message, &self.signature)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -180,10 +194,14 @@ mod tests {
 
         let result = Block::new(wordlist, proposer.public(), parent_hash);
         let block = result.ok().unwrap();
-        let signed_block = block.sign(&proposer);
+        let signed_block = block.clone().sign(&proposer);
 
-        let not_proposer = Keypair::generate();
-        assert!(signed_block.verify_signature(&proposer.public()));
-        assert_eq!(signed_block.verify_signature(&not_proposer.public()), false);
+        assert!(signed_block.verify_signature());
+
+        let invalid_signed_block = SignedBlock {
+            message: block,
+            signature: vec![1, 2, 3, 4],
+        };
+        assert_eq!(invalid_signed_block.verify_signature(), false)
     }
 }

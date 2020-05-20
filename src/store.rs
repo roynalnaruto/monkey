@@ -34,6 +34,7 @@ impl DiscStore {
         db.get(k)
     }
 
+    #[allow(dead_code)]
     pub fn flush(&self) -> Result<(), StoreError> {
         let store = Arc::clone(&self.db);
         let mut db = store.lock().unwrap();
@@ -50,7 +51,7 @@ mod tests {
 
     lazy_static! {
         static ref DISC_STORE: DiscStore = {
-            let path = Path::new(".data").join(".test").join("testdata");
+            let path = Path::new(".data").join(".test").join("storedata");
             let store = DiscStore::open(&path).ok().unwrap();
 
             store

@@ -1,10 +1,12 @@
 #[macro_use]
 extern crate lazy_static;
 
-pub mod block;
-pub mod dictionary;
-pub mod errors;
-pub mod store;
+mod block;
+mod dictionary;
+mod errors;
+mod store;
+
+pub mod service;
 
 fn main() {
     println!("Hello, world!");
