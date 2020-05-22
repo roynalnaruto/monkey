@@ -1,23 +1,46 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use bincode::serialize;
+use libp2p::{PeerId, Swarm};
 
-use crate::block::SignedBlock;
-use crate::errors::{BlockError, StoreError};
+use crate::behaviour::Behaviour;
+use crate::block::{Block, SignedBlock};
+use crate::errors::Error;
 use crate::store::DiscStore;
 
 pub struct Service {
-    store: DiscStore,
+    store: Arc<DiscStore>,
+
+    #[allow(dead_code)]
+    swarm: Arc<Swarm<Behaviour>>,
 }
 
 impl Service {
-    pub fn new(store_path: &Path) -> Result<Self, StoreError> {
+    pub fn new(store_path: &Path) -> Result<Self, Error> {
         let store = DiscStore::open(&store_path)?;
 
-        Ok(Service { store: store })
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let peer_id = PeerId::from(keypair.public());
+        let transport = libp2p::build_development_transport(keypair)?;
+        let behaviour = Behaviour::new(&peer_id);
+        let swarm = Swarm::new(transport, behaviour, peer_id);
+
+        Ok(Service {
+            store: Arc::new(store),
+            swarm: Arc::new(swarm),
+        })
     }
 
-    pub fn import_block(&self, signed_block: &SignedBlock) -> Result<(), BlockError> {
+    pub fn import_genesis(&self) -> Result<(), Error> {
+        let (genesis_block_hash, genesis_block) = Block::genesis_block();
+
+        self.store.put(&genesis_block_hash, &genesis_block)?;
+
+        Ok(())
+    }
+
+    pub fn import_block(&self, signed_block: &SignedBlock) -> Result<(), Error> {
         signed_block.message.clone().validate()?;
 
         match signed_block.verify_signature() {
@@ -26,11 +49,11 @@ impl Service {
                 let parent_hash = signed_block.message.parent_hash.to_be_bytes();
 
                 if let None = self.store.get(&parent_hash) {
-                    return Err(BlockError::UnknownParentBlock);
+                    return Err(Error::UnknownParentBlock);
                 }
 
                 if let Some(_) = self.store.get(&block_hash) {
-                    return Err(BlockError::DuplicateBlock);
+                    return Err(Error::DuplicateBlock);
                 }
 
                 let signed_block_bytes = serialize(&signed_block).unwrap();
@@ -38,103 +61,7 @@ impl Service {
 
                 Ok(())
             }
-            false => Err(BlockError::InvalidSignature),
+            false => Err(Error::InvalidSignature),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
-
-    use libp2p::identity::ed25519::Keypair;
-
-    use crate::block::Block;
-
-    lazy_static! {
-        static ref GENESIS_DATA: u16 = 1337;
-
-        static ref SERVICE: Service = {
-            let path = Path::new(".data").join(".test").join("servicedata");
-            let service = Service::new(&path).ok().unwrap();
-
-            // insert genesis block
-            // TODO: decide on a more sane way of achieving this
-            {
-                let mut hasher = DefaultHasher::new();
-                hasher.write_u16(*GENESIS_DATA);
-                let genesis_hash = hasher.finish();
-                service.store.put(&genesis_hash.to_be_bytes(), &[0, 1, 0, 1, 0]).unwrap();
-            }
-
-            service
-        };
-    }
-
-    #[test]
-    fn test_import_block() {
-        let wordlist = vec![
-            "and".to_string(),
-            "for".to_string(),
-            "that".to_string(),
-            "this".to_string(),
-        ];
-        let proposer = Keypair::generate();
-        let mut hasher = DefaultHasher::new();
-        hasher.write_u16(*GENESIS_DATA);
-        let parent_hash = hasher.finish();
-
-        let result = Block::new(wordlist, proposer.public(), parent_hash);
-        let block = result.ok().unwrap();
-        let signed_block = block.clone().sign(&proposer);
-
-        assert!(SERVICE.import_block(&signed_block).is_ok());
-    }
-
-    #[test]
-    fn test_import_block_invalid_parent() {
-        let wordlist = vec![
-            "and".to_string(),
-            "for".to_string(),
-            "that".to_string(),
-            "this".to_string(),
-        ];
-        let proposer = Keypair::generate();
-        let mut hasher = DefaultHasher::new();
-        hasher.write_u16(7331);
-        let parent_hash = hasher.finish();
-
-        let result = Block::new(wordlist, proposer.public(), parent_hash);
-        let block = result.ok().unwrap();
-        let signed_block = block.clone().sign(&proposer);
-
-        let result = SERVICE.import_block(&signed_block);
-        assert!(result.is_err());
-        assert_eq!(result.err().unwrap(), BlockError::UnknownParentBlock);
-    }
-
-    #[test]
-    fn test_import_duplicate_block() {
-        let wordlist = vec![
-            "never".to_string(),
-            "ever".to_string(),
-            "where".to_string(),
-            "when".to_string(),
-        ];
-        let proposer = Keypair::generate();
-        let mut hasher = DefaultHasher::new();
-        hasher.write_u16(*GENESIS_DATA);
-        let parent_hash = hasher.finish();
-
-        let result = Block::new(wordlist, proposer.public(), parent_hash);
-        let block = result.ok().unwrap();
-        let signed_block = block.clone().sign(&proposer);
-
-        SERVICE.import_block(&signed_block).unwrap();
-
-        assert!(SERVICE.import_block(&signed_block).is_err());
     }
 }
