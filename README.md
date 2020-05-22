@@ -3,7 +3,7 @@ Monkey is a command-line P2P toy blockchain.
 
 [![Build Status]][Build Link]
 
-[Build Status]: https://github.com/roynalnaruto/monkey/workflows/Rust/badge.svg?branch=master
+[Build Status]: https://github.com/roynalnaruto/monkey/workflows/Test%20Suite/badge.svg?branch=master
 [Build Link]: https://github.com/roynalnaruto/monkey/actions
 
 ## Overview
