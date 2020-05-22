@@ -8,9 +8,19 @@ use libp2p::identity::ed25519::{Keypair, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::dictionary::DICTIONARY;
-use crate::errors::BlockError;
+use crate::errors::Error;
 
 const BLOCK_WORDSET_LENGTH: usize = 4usize;
+const GENESIS_BLOCK_DATA: u16 = 1337;
+
+lazy_static! {
+    static ref GENESIS_BLOCK_HASH: u64 = {
+        let mut hasher = DefaultHasher::new();
+        hasher.write_u16(GENESIS_BLOCK_DATA);
+
+        hasher.finish()
+    };
+}
 
 #[derive(Clone, Debug, Hash, Deserialize, Serialize)]
 pub struct BlockBody {
@@ -18,7 +28,7 @@ pub struct BlockBody {
 }
 
 impl BlockBody {
-    pub fn new(wordlist: Vec<String>) -> Result<BlockBody, BlockError> {
+    pub fn new(wordlist: Vec<String>) -> Result<BlockBody, Error> {
         let wordset = BTreeSet::from_iter(wordlist.into_iter());
 
         let body = BlockBody { wordset: wordset };
@@ -27,21 +37,21 @@ impl BlockBody {
     }
 
     #[allow(dead_code)]
-    pub fn validate(self) -> Result<Self, BlockError> {
+    pub fn validate(self) -> Result<Self, Error> {
         self.validate_length().and_then(Self::validate_subset)
     }
 
-    pub fn validate_subset(self) -> Result<BlockBody, BlockError> {
+    pub fn validate_subset(self) -> Result<BlockBody, Error> {
         match self.wordset.is_subset(&DICTIONARY) {
             true => Ok(self),
-            false => Err(BlockError::InvalidWordset),
+            false => Err(Error::InvalidWordset),
         }
     }
 
-    pub fn validate_length(self) -> Result<BlockBody, BlockError> {
+    pub fn validate_length(self) -> Result<BlockBody, Error> {
         match self.wordset.iter().len() {
             BLOCK_WORDSET_LENGTH => Ok(self),
-            _ => Err(BlockError::InvalidWordsetLength),
+            _ => Err(Error::InvalidWordsetLength),
         }
     }
 }
@@ -66,7 +76,7 @@ impl Block {
         wordlist: Vec<String>,
         proposer: PublicKey,
         parent_hash: u64,
-    ) -> Result<Block, BlockError> {
+    ) -> Result<Block, Error> {
         let body = BlockBody::new(wordlist)?;
 
         let mut block = Block {
@@ -84,7 +94,7 @@ impl Block {
         Ok(block)
     }
 
-    pub fn validate(self) -> Result<Self, BlockError> {
+    pub fn validate(self) -> Result<Self, Error> {
         self.body
             .clone()
             .validate_length()
@@ -101,6 +111,13 @@ impl Block {
             message: self,
             signature: signature,
         }
+    }
+
+    pub fn genesis_block() -> (Vec<u8>, Vec<u8>) {
+        (
+            GENESIS_BLOCK_HASH.to_be_bytes().to_vec(),
+            GENESIS_BLOCK_DATA.to_be_bytes().to_vec(),
+        )
     }
 }
 
@@ -162,7 +179,7 @@ mod tests {
         let result = Block::new(wordlist, proposer.public(), parent_hash);
 
         assert!(result.is_err());
-        assert_eq!(result.err().unwrap(), BlockError::InvalidWordset);
+        assert_eq!(result.err().unwrap(), Error::InvalidWordset);
     }
 
     #[test]
@@ -176,7 +193,7 @@ mod tests {
         let result = Block::new(wordlist, proposer.public(), parent_hash);
 
         assert!(result.is_err());
-        assert_eq!(result.err().unwrap(), BlockError::InvalidWordsetLength);
+        assert_eq!(result.err().unwrap(), Error::InvalidWordsetLength);
     }
 
     #[test]
