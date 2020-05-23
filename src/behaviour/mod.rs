@@ -3,7 +3,9 @@ use std::hash::{Hash, Hasher};
 use std::task::Poll;
 
 use libp2p::{
-    gossipsub::{Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId},
+    gossipsub::{
+        Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, MessageId, Topic,
+    },
     swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess},
     NetworkBehaviour, PeerId,
 };
@@ -36,6 +38,11 @@ impl Behaviour {
             gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
             events: Vec::<BehaviourEvent>::new(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn subscribe(&mut self, topic: &Topic) -> bool {
+        self.gossipsub.subscribe(topic.clone())
     }
 
     #[allow(dead_code)]

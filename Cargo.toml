@@ -4,10 +4,19 @@ version = "0.1.0"
 authors = ["Rohit Narurkar <rohit.narurkar@protonmail.com>"]
 edition = "2018"
 
+[lib]
+name = "monkeylib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "monkey"
+path = "src/bin/main.rs"
+
 [dependencies]
 async-std = "1.5.0"
 bincode = "1.2.1"
 chrono = { version = "0.4", features = ["serde"] }
+clap = "2.33.1"
 env_logger = "0.7.1"
 futures = "0.3.5"
 lazy_static = "1.4.0"

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bincode::serialize;
-use libp2p::{PeerId, Swarm};
+use libp2p::{Multiaddr, PeerId, Swarm};
 
 use crate::behaviour::Behaviour;
 use crate::block::{Block, SignedBlock};
@@ -30,6 +30,25 @@ impl Service {
             store: Arc::new(store),
             swarm: Arc::new(swarm),
         })
+    }
+
+    #[allow(unused_variables)]
+    pub fn start(&mut self, to_dial: Option<Multiaddr>) {
+        // TODO: subscribe to default gossipsub topic
+
+        // TODO: listen on all interfaces for swarm
+
+        // TODO: dial out to the peer to be dialed
+
+        // TODO: setup MPSC channel between service and handler
+
+        // TODO: spawn task to
+        // 1. poll stdin
+        // 2. poll swarm
+        //
+        // In both cases, we will forward the requests
+        // to handler.rs
+        unimplemented!();
     }
 
     pub fn import_genesis(&self) -> Result<(), Error> {

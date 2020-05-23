@@ -7,7 +7,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 
 use libp2p::identity::ed25519::Keypair;
-use monkey::{Block, Error, Service};
+use monkeylib::{Block, Error, Service};
 
 #[cfg(test)]
 fn my_runner(tests: &[&dyn Fn(&Service)]) {
