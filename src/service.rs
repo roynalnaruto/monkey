@@ -1,19 +1,25 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
+use async_std::io;
 use bincode::serialize;
-use libp2p::{Multiaddr, PeerId, Swarm};
+use futures::{future, prelude::*};
+use libp2p::{gossipsub::Topic, Multiaddr, PeerId, Swarm};
+use tokio::runtime::Handle;
+use void::Void;
 
 use crate::behaviour::Behaviour;
 use crate::block::{Block, SignedBlock};
 use crate::errors::Error;
+use crate::handler::Handler;
 use crate::store::DiscStore;
 
 pub struct Service {
     store: Arc<DiscStore>,
 
     #[allow(dead_code)]
-    swarm: Arc<Swarm<Behaviour>>,
+    swarm: Swarm<Behaviour>,
 }
 
 impl Service {
@@ -28,27 +34,69 @@ impl Service {
 
         Ok(Service {
             store: Arc::new(store),
-            swarm: Arc::new(swarm),
+            swarm: swarm,
         })
     }
 
     #[allow(unused_variables)]
-    pub fn start(&mut self, to_dial: Option<Multiaddr>) {
-        // TODO: subscribe to default gossipsub topic
+    pub fn start(
+        &mut self,
+        rt_handle: &Handle,
+        to_dial: Option<Multiaddr>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let topic = Topic::new("monkey-chain".into());
+        self.swarm.subscribe(&topic);
 
-        // TODO: listen on all interfaces for swarm
+        if let Some(addr) = to_dial {
+            Swarm::dial_addr(&mut self.swarm, addr.clone())?;
+            info!("Dialed {:?}", addr);
+        }
 
-        // TODO: dial out to the peer to be dialed
+        Swarm::listen_on(&mut self.swarm, "/ip4/0.0.0.0/tcp/0".parse().unwrap()).unwrap();
 
-        // TODO: setup MPSC channel between service and handler
+        let mut stdin = io::BufReader::new(io::stdin()).lines();
 
-        // TODO: spawn task to
-        // 1. poll stdin
-        // 2. poll swarm
-        //
-        // In both cases, we will forward the requests
-        // to handler.rs
-        unimplemented!();
+        // TODO: add MPSC between service and handler
+        // for handling stdin and gossipsub events
+        let handler = Handler::new(&rt_handle);
+
+        let mut listening = false;
+        rt_handle.block_on(future::poll_fn(move |cx: &mut Context| {
+            loop {
+                match stdin.try_poll_next_unpin(cx)? {
+                    Poll::Ready(Some(line)) => {
+                        self.swarm.publish(&topic, line.as_bytes());
+                    }
+                    Poll::Ready(None) => panic!("Stdin closed"),
+                    Poll::Pending => break,
+                }
+            }
+
+            loop {
+                match self.swarm.poll_next_unpin(cx) {
+                    Poll::Ready(Some(event)) => debug!("{:?}", event),
+                    Poll::Ready(None) => return Poll::Ready(Ok(())),
+                    Poll::Pending => {
+                        if !listening {
+                            for addr in Swarm::listeners(&self.swarm) {
+                                info!("Listening on {:?}", addr);
+                                listening = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            loop {
+                match self.swarm.poll::<Void>() {
+                    Poll::Pending => break,
+                    Poll::Ready(msg) => info!("polled event = {:?}", msg),
+                }
+            }
+
+            Poll::Pending
+        }))
     }
 
     pub fn import_genesis(&self) -> Result<(), Error> {

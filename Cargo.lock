@@ -1556,8 +1556,11 @@ dependencies = [
  "futures",
  "lazy_static",
  "libp2p",
+ "log",
  "rusty-leveldb",
  "serde",
+ "tokio",
+ "void",
 ]
 
 [[package]]
@@ -2396,6 +2399,17 @@ checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
 dependencies = [
  "libc",
  "winapi 0.3.8",
+]
+
+[[package]]
+name = "tokio"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d099fa27b9702bed751524694adbe393e18b36b204da91eb1cbbbbb4a5ee2d58"
+dependencies = [
+ "bytes",
+ "num_cpus",
+ "pin-project-lite",
 ]
 
 [[package]]

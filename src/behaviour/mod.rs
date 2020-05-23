@@ -40,12 +40,14 @@ impl Behaviour {
         }
     }
 
-    #[allow(dead_code)]
     pub fn subscribe(&mut self, topic: &Topic) -> bool {
         self.gossipsub.subscribe(topic.clone())
     }
 
-    #[allow(dead_code)]
+    pub fn publish(&mut self, topic: &Topic, lines: &[u8]) {
+        self.gossipsub.publish(&topic, lines)
+    }
+
     pub fn poll<TBehaviourIn>(
         &mut self,
     ) -> Poll<NetworkBehaviourAction<TBehaviourIn, BehaviourEvent>> {
@@ -70,7 +72,7 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for Behaviour {
                         });
                     }
                     Err(e) => {
-                        eprintln!("Error: {:?}", e);
+                        error!("Failed to decode Gossipsub message: {:?}", e);
                     }
                 }
             }
