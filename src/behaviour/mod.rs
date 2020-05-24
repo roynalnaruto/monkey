@@ -10,7 +10,7 @@ use libp2p::{
     NetworkBehaviour, PeerId,
 };
 
-mod types;
+pub mod types;
 
 use crate::behaviour::types::{BehaviourEvent, GossipsubMessage as DecodedMessage};
 
@@ -44,6 +44,7 @@ impl Behaviour {
         self.gossipsub.subscribe(topic.clone())
     }
 
+    #[allow(dead_code)]
     pub fn publish(&mut self, topic: &Topic, lines: &[u8]) {
         self.gossipsub.publish(&topic, lines)
     }

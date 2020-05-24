@@ -5,21 +5,26 @@ use std::task::{Context, Poll};
 use async_std::io;
 use bincode::serialize;
 use futures::{future, prelude::*};
-use libp2p::{gossipsub::Topic, Multiaddr, PeerId, Swarm};
-use tokio::runtime::Handle;
+use libp2p::{
+    gossipsub::Topic, swarm::NetworkBehaviourAction::GenerateEvent, Multiaddr, PeerId, Swarm,
+};
+use tokio::{runtime::Handle, sync::mpsc};
 use void::Void;
 
-use crate::behaviour::Behaviour;
+use crate::behaviour::{types::BehaviourEvent, Behaviour};
 use crate::block::{Block, SignedBlock};
 use crate::errors::Error;
-use crate::handler::Handler;
+use crate::handler::{Handler, HandlerMessage};
 use crate::store::DiscStore;
 
 pub struct Service {
     store: Arc<DiscStore>,
-
-    #[allow(dead_code)]
     swarm: Swarm<Behaviour>,
+}
+
+#[allow(dead_code)]
+pub enum ServiceMessage {
+    NewBlock(Box<Block>),
 }
 
 impl Service {
@@ -38,7 +43,6 @@ impl Service {
         })
     }
 
-    #[allow(unused_variables)]
     pub fn start(
         &mut self,
         rt_handle: &Handle,
@@ -56,16 +60,15 @@ impl Service {
 
         let mut stdin = io::BufReader::new(io::stdin()).lines();
 
-        // TODO: add MPSC between service and handler
-        // for handling stdin and gossipsub events
-        let handler = Handler::new(&rt_handle);
+        let (service_send, mut service_recv) = mpsc::unbounded_channel::<ServiceMessage>();
+        let handler_send = Handler::new(&rt_handle, service_send.clone());
 
         let mut listening = false;
         rt_handle.block_on(future::poll_fn(move |cx: &mut Context| {
             loop {
                 match stdin.try_poll_next_unpin(cx)? {
                     Poll::Ready(Some(line)) => {
-                        self.swarm.publish(&topic, line.as_bytes());
+                        handler_send.send(HandlerMessage::Stdin(line))?;
                     }
                     Poll::Ready(None) => panic!("Stdin closed"),
                     Poll::Pending => break,
@@ -91,12 +94,50 @@ impl Service {
             loop {
                 match self.swarm.poll::<Void>() {
                     Poll::Pending => break,
-                    Poll::Ready(msg) => info!("polled event = {:?}", msg),
+                    Poll::Ready(GenerateEvent(event)) => match event {
+                        BehaviourEvent::PeerSubscribed(peer_id, topic_hash) => {
+                            info!("Peer {} subscribed to {}", peer_id, topic_hash);
+                        }
+                        BehaviourEvent::PeerUnsubscribed(peer_id, topic_hash) => {
+                            info!("Peer {} unsubscribed to {}", peer_id, topic_hash);
+                        }
+                        BehaviourEvent::GossipsubMessage {
+                            id,
+                            source,
+                            message,
+                        } => {
+                            info!("Gossipsub message {} from {}: {:?}", id, source, message);
+
+                            // TODO: pack this message into HandlerMessage and
+                            // send to handler to process message
+                            todo!();
+                        }
+                    },
+                    Poll::Ready(unhandled_event) => {
+                        debug!("Found unhandled event: {:?}", unhandled_event);
+                    }
+                }
+            }
+
+            loop {
+                match service_recv.try_recv() {
+                    Ok(service_msg) => self.handle_message(service_msg),
+                    Err(..) => break,
                 }
             }
 
             Poll::Pending
         }))
+    }
+
+    #[allow(unused_variables)]
+    fn handle_message(&self, service_msg: ServiceMessage) {
+        match service_msg {
+            ServiceMessage::NewBlock(msg) => {
+                // TODO: sign block and publish to swarm
+                todo!();
+            }
+        };
     }
 
     pub fn import_genesis(&self) -> Result<(), Error> {
