@@ -44,7 +44,6 @@ impl Behaviour {
         self.gossipsub.subscribe(topic.clone())
     }
 
-    #[allow(dead_code)]
     pub fn publish(&mut self, topic: &Topic, lines: &[u8]) {
         self.gossipsub.publish(&topic, lines)
     }

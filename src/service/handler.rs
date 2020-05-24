@@ -1,22 +1,21 @@
-use libp2p::{gossipsub::MessageId, PeerId};
+use libp2p::{gossipsub::MessageId, identity::PublicKey, PeerId};
 use tokio::{
     runtime::Handle,
     sync::mpsc::{self, UnboundedSender},
 };
 
 use crate::behaviour::types::GossipsubMessage;
+use crate::block::Block;
 use crate::service::ServiceMessage;
 
-#[allow(dead_code)]
 pub struct Handler {
     service_send: UnboundedSender<ServiceMessage>,
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum HandlerMessage {
     Publish(MessageId, PeerId, GossipsubMessage),
-    Stdin(String),
+    Stdin(String, PublicKey),
 }
 
 impl Handler {
@@ -43,10 +42,31 @@ impl Handler {
     #[allow(unused_variables)]
     fn handle_message(&self, handler_msg: HandlerMessage) {
         match handler_msg {
-            HandlerMessage::Stdin(msg) => {
-                // TODO: create, validate block and send back
-                // to service to be progagated to the swarm
-                todo!();
+            HandlerMessage::Stdin(msg, public_key) => {
+                let proposer = match public_key {
+                    PublicKey::Ed25519(pk) => pk,
+                    _ => panic!("Only Ed25519 scheme is supported"),
+                };
+
+                let wordlist: Vec<String> = msg
+                    .split_ascii_whitespace()
+                    .map(|w| w.to_lowercase())
+                    .collect();
+
+                // TODO: this will be removed once we have a state
+                // that maintains the longest chain and parent_hash
+                // is the block hash of the last inserted block
+                let (dummy_parent_hash, _, _) = Block::genesis_block();
+                match Block::new(wordlist, proposer, dummy_parent_hash) {
+                    Ok(block) => {
+                        if let Err(e) = self.service_send.send(ServiceMessage::NewBlock(block)) {
+                            error!("Error sending message between Handler and Service: {:?}", e);
+                        }
+                    }
+                    Err(..) => {
+                        warn!("Invalid block");
+                    }
+                }
             }
             HandlerMessage::Publish(id, source, msg) => {
                 // TODO: verify signature of signed block

@@ -113,8 +113,9 @@ impl Block {
         }
     }
 
-    pub fn genesis_block() -> (Vec<u8>, Vec<u8>) {
+    pub fn genesis_block() -> (u64, Vec<u8>, Vec<u8>) {
         (
+            *GENESIS_BLOCK_HASH,
             GENESIS_BLOCK_HASH.to_be_bytes().to_vec(),
             GENESIS_BLOCK_DATA.to_be_bytes().to_vec(),
         )

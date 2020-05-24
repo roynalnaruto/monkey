@@ -6,38 +6,46 @@ use async_std::io;
 use bincode::serialize;
 use futures::{future, prelude::*};
 use libp2p::{
-    gossipsub::Topic, swarm::NetworkBehaviourAction::GenerateEvent, Multiaddr, PeerId, Swarm,
+    gossipsub::Topic, identity::Keypair, swarm::NetworkBehaviourAction::GenerateEvent, Multiaddr,
+    PeerId, Swarm,
 };
 use tokio::{runtime::Handle, sync::mpsc};
 use void::Void;
 
-use crate::behaviour::{types::BehaviourEvent, Behaviour};
+use crate::behaviour::{
+    types::{BehaviourEvent, GossipsubMessage},
+    Behaviour,
+};
 use crate::block::{Block, SignedBlock};
 use crate::errors::Error;
-use crate::handler::{Handler, HandlerMessage};
 use crate::store::DiscStore;
 
+mod handler;
+use handler::{Handler, HandlerMessage};
+
 pub struct Service {
+    local_keypair: Keypair,
     store: Arc<DiscStore>,
     swarm: Swarm<Behaviour>,
 }
 
-#[allow(dead_code)]
+#[derive(Debug)]
 pub enum ServiceMessage {
-    NewBlock(Box<Block>),
+    NewBlock(Block),
 }
 
 impl Service {
     pub fn new(store_path: &Path) -> Result<Self, Error> {
         let store = DiscStore::open(&store_path)?;
 
-        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let keypair = Keypair::generate_ed25519();
         let peer_id = PeerId::from(keypair.public());
-        let transport = libp2p::build_development_transport(keypair)?;
+        let transport = libp2p::build_development_transport(keypair.clone())?;
         let behaviour = Behaviour::new(&peer_id);
         let swarm = Swarm::new(transport, behaviour, peer_id);
 
         Ok(Service {
+            local_keypair: keypair,
             store: Arc::new(store),
             swarm: swarm,
         })
@@ -68,7 +76,8 @@ impl Service {
             loop {
                 match stdin.try_poll_next_unpin(cx)? {
                     Poll::Ready(Some(line)) => {
-                        handler_send.send(HandlerMessage::Stdin(line))?;
+                        handler_send
+                            .send(HandlerMessage::Stdin(line, self.local_keypair.public()))?;
                     }
                     Poll::Ready(None) => panic!("Stdin closed"),
                     Poll::Pending => break,
@@ -107,10 +116,7 @@ impl Service {
                             message,
                         } => {
                             info!("Gossipsub message {} from {}: {:?}", id, source, message);
-
-                            // TODO: pack this message into HandlerMessage and
-                            // send to handler to process message
-                            todo!();
+                            handler_send.send(HandlerMessage::Publish(id, source, message))?;
                         }
                     },
                     Poll::Ready(unhandled_event) => {
@@ -131,17 +137,35 @@ impl Service {
     }
 
     #[allow(unused_variables)]
-    fn handle_message(&self, service_msg: ServiceMessage) {
+    fn handle_message(&mut self, service_msg: ServiceMessage) {
         match service_msg {
-            ServiceMessage::NewBlock(msg) => {
-                // TODO: sign block and publish to swarm
-                todo!();
+            ServiceMessage::NewBlock(block) => {
+                let keypair = match &self.local_keypair {
+                    Keypair::Ed25519(kp) => kp,
+                    _ => panic!("Only Ed25519 scheme is supported"),
+                };
+
+                let signed_block = block.sign(&keypair);
+                let msg = GossipsubMessage::Block(signed_block);
+
+                match msg.encode() {
+                    Ok(encoded_msg) => {
+                        let topic = Topic::new("monkey-chain".into());
+                        self.swarm.publish(&topic, &encoded_msg);
+
+                        // TODO: import signed block in own store
+                        todo!();
+                    }
+                    Err(e) => {
+                        error!("Failed to encode Gossipsub message: {:?}", e);
+                    }
+                }
             }
         };
     }
 
     pub fn import_genesis(&self) -> Result<(), Error> {
-        let (genesis_block_hash, genesis_block) = Block::genesis_block();
+        let (_, genesis_block_hash, genesis_block) = Block::genesis_block();
 
         self.store.put(&genesis_block_hash, &genesis_block)?;
 

@@ -8,7 +8,6 @@ mod behaviour;
 mod block;
 mod dictionary;
 mod errors;
-mod handler;
 mod service;
 mod store;
 

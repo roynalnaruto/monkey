@@ -21,11 +21,10 @@ pub enum BehaviourEvent {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum GossipsubMessage {
-    Block(Box<SignedBlock>),
+    Block(SignedBlock),
 }
 
 impl GossipsubMessage {
-    #[allow(dead_code)]
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let bytes: Vec<u8> = serialize(&self)?;
 
