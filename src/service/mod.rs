@@ -21,6 +21,7 @@ use crate::behaviour::{
     Behaviour,
 };
 use crate::block::Block;
+use crate::display::Display;
 use crate::errors::Error;
 use crate::store::DiscStore;
 
@@ -107,6 +108,7 @@ impl Service {
                                 info!("Listening on {:?}", addr);
                                 listening = true;
                             }
+                            Display::init().unwrap();
                         }
                         break;
                     }

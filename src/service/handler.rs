@@ -9,6 +9,7 @@ use tokio::{
 
 use crate::behaviour::types::GossipsubMessage;
 use crate::block::{Block, SignedBlock};
+use crate::display::Display;
 use crate::errors::Error;
 use crate::service::ServiceMessage;
 use crate::store::DiscStore;
@@ -16,6 +17,7 @@ use crate::store::DiscStore;
 pub struct Handler {
     store: Arc<DiscStore>,
     service_send: UnboundedSender<ServiceMessage>,
+    display: Display,
 }
 
 #[derive(Debug)]
@@ -33,9 +35,12 @@ impl Handler {
     ) -> UnboundedSender<HandlerMessage> {
         let (handler_send, mut handler_recv) = mpsc::unbounded_channel::<HandlerMessage>();
 
-        let handler = Handler {
+        let display = Display::new();
+
+        let mut handler = Handler {
             service_send: service_send,
             store: Arc::clone(store),
+            display: display,
         };
 
         if let Err(e) = handler.import_genesis() {
@@ -52,7 +57,7 @@ impl Handler {
         handler_send
     }
 
-    fn handle_message(&self, handler_msg: HandlerMessage) {
+    fn handle_message(&mut self, handler_msg: HandlerMessage) {
         match handler_msg {
             HandlerMessage::Stdin(msg, public_key) => {
                 let proposer = match public_key {
@@ -75,13 +80,20 @@ impl Handler {
                             error!("Error sending message between Handler and Service: {:?}", e);
                         }
                     }
-                    Err(..) => {
-                        warn!("Invalid block");
+                    Err(e) => {
+                        warn!("Invalid block: {:?}", e);
+
+                        Display::notice_invalid_block().unwrap();
                     }
                 }
             }
             HandlerMessage::OwnBlock(signed_block) => match self.import_block(&signed_block) {
-                Ok(()) => info!("Inserted own block {:?}", signed_block.message.hash),
+                Ok(()) => {
+                    info!("Inserted own block {:?}", signed_block.message.hash);
+
+                    self.display.new_block(signed_block.display()).unwrap();
+                    Display::notice_valid_block().unwrap();
+                }
                 Err(e) => warn!("Ignoring invalid own block: {:?}", e),
             },
             HandlerMessage::Publish(id, source, msg) => match msg {

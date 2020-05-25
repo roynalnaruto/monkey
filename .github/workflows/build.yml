@@ -2,9 +2,12 @@ name: Test Suite
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+      - feat/*
   pull_request:
-    branches: [ master ]
+    branches:
+      - master
 
 jobs:
   build:
