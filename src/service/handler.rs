@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use bincode::serialize;
 use libp2p::{gossipsub::MessageId, identity::PublicKey, PeerId};
 use tokio::{
     runtime::Handle,
@@ -5,29 +8,39 @@ use tokio::{
 };
 
 use crate::behaviour::types::GossipsubMessage;
-use crate::block::Block;
+use crate::block::{Block, SignedBlock};
+use crate::errors::Error;
 use crate::service::ServiceMessage;
+use crate::store::DiscStore;
 
 pub struct Handler {
+    store: Arc<DiscStore>,
     service_send: UnboundedSender<ServiceMessage>,
 }
 
 #[derive(Debug)]
 pub enum HandlerMessage {
     Publish(MessageId, PeerId, GossipsubMessage),
+    OwnBlock(SignedBlock),
     Stdin(String, PublicKey),
 }
 
 impl Handler {
     pub fn new(
         rt_handle: &Handle,
+        store: &Arc<DiscStore>,
         service_send: UnboundedSender<ServiceMessage>,
     ) -> UnboundedSender<HandlerMessage> {
         let (handler_send, mut handler_recv) = mpsc::unbounded_channel::<HandlerMessage>();
 
         let handler = Handler {
             service_send: service_send,
+            store: Arc::clone(store),
         };
+
+        if let Err(e) = handler.import_genesis() {
+            panic!("Error inserting genesis block: {:?}", e)
+        }
 
         rt_handle.spawn_blocking(move || loop {
             match handler_recv.try_recv() {
@@ -39,7 +52,6 @@ impl Handler {
         handler_send
     }
 
-    #[allow(unused_variables)]
     fn handle_message(&self, handler_msg: HandlerMessage) {
         match handler_msg {
             HandlerMessage::Stdin(msg, public_key) => {
@@ -68,12 +80,58 @@ impl Handler {
                     }
                 }
             }
-            HandlerMessage::Publish(id, source, msg) => {
-                // TODO: verify signature of signed block
-                // import to blockchain if its valid
-                // reject otherwise
-                todo!();
-            }
+            HandlerMessage::OwnBlock(signed_block) => match self.import_block(&signed_block) {
+                Ok(()) => info!("Inserted own block {:?}", signed_block.message.hash),
+                Err(e) => warn!("Ignoring invalid own block: {:?}", e),
+            },
+            HandlerMessage::Publish(id, source, msg) => match msg {
+                GossipsubMessage::Block(signed_block) => match self.import_block(&signed_block) {
+                    Ok(()) => {
+                        info!("Inserted published block {:?}", signed_block.message.hash);
+
+                        if let Err(e) = self
+                            .service_send
+                            .send(ServiceMessage::PropagateGossip(id, source))
+                        {
+                            error!("Error sending message between Handler and Service: {:?}", e);
+                        }
+                    }
+                    Err(e) => warn!("Ignoring invalid published block: {:?}", e),
+                },
+            },
         };
+    }
+
+    fn import_genesis(&self) -> Result<(), Error> {
+        let (_, genesis_block_hash, genesis_block) = Block::genesis_block();
+
+        self.store.put(&genesis_block_hash, &genesis_block)?;
+
+        Ok(())
+    }
+
+    fn import_block(&self, signed_block: &SignedBlock) -> Result<(), Error> {
+        signed_block.message.clone().validate()?;
+
+        match signed_block.verify_signature() {
+            true => {
+                let block_hash = signed_block.message.hash.to_be_bytes();
+                let parent_hash = signed_block.message.parent_hash.to_be_bytes();
+
+                if let None = self.store.get(&parent_hash) {
+                    return Err(Error::UnknownParentBlock);
+                }
+
+                if let Some(_) = self.store.get(&block_hash) {
+                    return Err(Error::DuplicateBlock);
+                }
+
+                let signed_block_bytes = serialize(&signed_block).unwrap();
+                self.store.put(&block_hash, &signed_block_bytes)?;
+
+                Ok(())
+            }
+            false => Err(Error::InvalidSignature),
+        }
     }
 }

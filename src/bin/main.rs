@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rt_handle = rt.handle();
 
     let path = Path::new(".data").join(".blockchain").join(db_name);
-    let mut service = Service::new(&path).ok().unwrap();
+    let mut service = Service::new(&rt_handle, &path).ok().unwrap();
     service.start(&rt_handle, to_dial)?;
 
     Ok(())

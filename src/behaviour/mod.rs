@@ -40,6 +40,10 @@ impl Behaviour {
         }
     }
 
+    pub fn progagate_message(&mut self, message_id: &MessageId, source: &PeerId) -> bool {
+        self.gossipsub.propagate_message(&message_id, &source)
+    }
+
     pub fn subscribe(&mut self, topic: &Topic) -> bool {
         self.gossipsub.subscribe(topic.clone())
     }

@@ -3,20 +3,24 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_std::io;
-use bincode::serialize;
 use futures::{future, prelude::*};
 use libp2p::{
-    gossipsub::Topic, identity::Keypair, swarm::NetworkBehaviourAction::GenerateEvent, Multiaddr,
-    PeerId, Swarm,
+    gossipsub::{MessageId, Topic},
+    identity::Keypair,
+    swarm::NetworkBehaviourAction::GenerateEvent,
+    Multiaddr, PeerId, Swarm,
 };
-use tokio::{runtime::Handle, sync::mpsc};
+use tokio::{
+    runtime::Handle,
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+};
 use void::Void;
 
 use crate::behaviour::{
     types::{BehaviourEvent, GossipsubMessage},
     Behaviour,
 };
-use crate::block::{Block, SignedBlock};
+use crate::block::Block;
 use crate::errors::Error;
 use crate::store::DiscStore;
 
@@ -25,18 +29,25 @@ use handler::{Handler, HandlerMessage};
 
 pub struct Service {
     local_keypair: Keypair,
+
+    #[allow(dead_code)]
     store: Arc<DiscStore>,
+
     swarm: Swarm<Behaviour>,
+    handler_send: UnboundedSender<HandlerMessage>,
+    service_recv: UnboundedReceiver<ServiceMessage>,
 }
 
 #[derive(Debug)]
 pub enum ServiceMessage {
     NewBlock(Block),
+    PropagateGossip(MessageId, PeerId),
 }
 
 impl Service {
-    pub fn new(store_path: &Path) -> Result<Self, Error> {
-        let store = DiscStore::open(&store_path)?;
+    pub fn new(rt_handle: &Handle, store_path: &Path) -> Result<Self, Error> {
+        let disc_store = DiscStore::open(&store_path)?;
+        let store = Arc::new(disc_store);
 
         let keypair = Keypair::generate_ed25519();
         let peer_id = PeerId::from(keypair.public());
@@ -44,10 +55,15 @@ impl Service {
         let behaviour = Behaviour::new(&peer_id);
         let swarm = Swarm::new(transport, behaviour, peer_id);
 
+        let (service_send, service_recv) = mpsc::unbounded_channel::<ServiceMessage>();
+        let handler_send = Handler::new(&rt_handle, &store, service_send.clone());
+
         Ok(Service {
             local_keypair: keypair,
-            store: Arc::new(store),
+            store: store,
             swarm: swarm,
+            handler_send: handler_send,
+            service_recv: service_recv,
         })
     }
 
@@ -61,22 +77,19 @@ impl Service {
 
         if let Some(addr) = to_dial {
             Swarm::dial_addr(&mut self.swarm, addr.clone())?;
-            info!("Dialed {:?}", addr);
+            debug!("Dialed {:?}", addr);
         }
 
         Swarm::listen_on(&mut self.swarm, "/ip4/0.0.0.0/tcp/0".parse().unwrap()).unwrap();
 
         let mut stdin = io::BufReader::new(io::stdin()).lines();
 
-        let (service_send, mut service_recv) = mpsc::unbounded_channel::<ServiceMessage>();
-        let handler_send = Handler::new(&rt_handle, service_send.clone());
-
         let mut listening = false;
         rt_handle.block_on(future::poll_fn(move |cx: &mut Context| {
             loop {
                 match stdin.try_poll_next_unpin(cx)? {
                     Poll::Ready(Some(line)) => {
-                        handler_send
+                        self.handler_send
                             .send(HandlerMessage::Stdin(line, self.local_keypair.public()))?;
                     }
                     Poll::Ready(None) => panic!("Stdin closed"),
@@ -105,18 +118,19 @@ impl Service {
                     Poll::Pending => break,
                     Poll::Ready(GenerateEvent(event)) => match event {
                         BehaviourEvent::PeerSubscribed(peer_id, topic_hash) => {
-                            info!("Peer {} subscribed to {}", peer_id, topic_hash);
+                            debug!("Peer {} subscribed to {}", peer_id, topic_hash);
                         }
                         BehaviourEvent::PeerUnsubscribed(peer_id, topic_hash) => {
-                            info!("Peer {} unsubscribed to {}", peer_id, topic_hash);
+                            debug!("Peer {} unsubscribed to {}", peer_id, topic_hash);
                         }
                         BehaviourEvent::GossipsubMessage {
                             id,
                             source,
                             message,
                         } => {
-                            info!("Gossipsub message {} from {}: {:?}", id, source, message);
-                            handler_send.send(HandlerMessage::Publish(id, source, message))?;
+                            debug!("Gossipsub message {} from {}: {:?}", id, source, message);
+                            self.handler_send
+                                .send(HandlerMessage::Publish(id, source, message))?;
                         }
                     },
                     Poll::Ready(unhandled_event) => {
@@ -126,8 +140,10 @@ impl Service {
             }
 
             loop {
-                match service_recv.try_recv() {
-                    Ok(service_msg) => self.handle_message(service_msg),
+                match self.service_recv.try_recv() {
+                    Ok(service_msg) => {
+                        self.handle_message(service_msg)?;
+                    }
                     Err(..) => break,
                 }
             }
@@ -136,8 +152,10 @@ impl Service {
         }))
     }
 
-    #[allow(unused_variables)]
-    fn handle_message(&mut self, service_msg: ServiceMessage) {
+    fn handle_message(
+        &mut self,
+        service_msg: ServiceMessage,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         match service_msg {
             ServiceMessage::NewBlock(block) => {
                 let keypair = match &self.local_keypair {
@@ -146,54 +164,26 @@ impl Service {
                 };
 
                 let signed_block = block.sign(&keypair);
-                let msg = GossipsubMessage::Block(signed_block);
+                let msg = GossipsubMessage::Block(signed_block.clone());
 
                 match msg.encode() {
                     Ok(encoded_msg) => {
                         let topic = Topic::new("monkey-chain".into());
                         self.swarm.publish(&topic, &encoded_msg);
 
-                        // TODO: import signed block in own store
-                        todo!();
+                        self.handler_send
+                            .send(HandlerMessage::OwnBlock(signed_block))?;
                     }
                     Err(e) => {
                         error!("Failed to encode Gossipsub message: {:?}", e);
                     }
                 }
             }
+            ServiceMessage::PropagateGossip(id, source) => {
+                self.swarm.progagate_message(&id, &source);
+            }
         };
-    }
-
-    pub fn import_genesis(&self) -> Result<(), Error> {
-        let (_, genesis_block_hash, genesis_block) = Block::genesis_block();
-
-        self.store.put(&genesis_block_hash, &genesis_block)?;
 
         Ok(())
-    }
-
-    pub fn import_block(&self, signed_block: &SignedBlock) -> Result<(), Error> {
-        signed_block.message.clone().validate()?;
-
-        match signed_block.verify_signature() {
-            true => {
-                let block_hash = signed_block.message.hash.to_be_bytes();
-                let parent_hash = signed_block.message.parent_hash.to_be_bytes();
-
-                if let None = self.store.get(&parent_hash) {
-                    return Err(Error::UnknownParentBlock);
-                }
-
-                if let Some(_) = self.store.get(&block_hash) {
-                    return Err(Error::DuplicateBlock);
-                }
-
-                let signed_block_bytes = serialize(&signed_block).unwrap();
-                self.store.put(&block_hash, &signed_block_bytes)?;
-
-                Ok(())
-            }
-            false => Err(Error::InvalidSignature),
-        }
     }
 }

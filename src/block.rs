@@ -124,7 +124,7 @@ impl Block {
 
 type Signature = Vec<u8>;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignedBlock {
     pub message: Block,
     signature: Signature,
