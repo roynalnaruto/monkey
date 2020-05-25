@@ -7,6 +7,7 @@ extern crate log;
 mod behaviour;
 mod block;
 mod dictionary;
+mod display;
 mod errors;
 mod service;
 mod store;

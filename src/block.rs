@@ -140,6 +140,21 @@ impl SignedBlock {
             _ => false,
         }
     }
+
+    pub fn display(&self) -> Vec<String> {
+        let mut display = Vec::with_capacity(8);
+
+        display.push("                  ".to_string());
+        display.push("        _________ ".to_string());
+        display.push("       /        /|".to_string());
+        display.push("      /________/ |".to_string());
+        display.push(" ---> |        | |".to_string());
+        display.push("      |        | /".to_string());
+        display.push("      |________|/ ".to_string());
+        display.push("                  ".to_string());
+
+        display
+    }
 }
 
 #[cfg(test)]
